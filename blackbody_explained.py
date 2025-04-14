@@ -171,23 +171,30 @@ class BlackbodyRadiationExplained(Scene):
 
 
         # Axes: Wavelength (nm) vs Relative Intensity
+        # Remove the unsupported 'margin' parameter
         axes = Axes(
             x_range=[200, 1500, 200], # Wavelength in nm
             y_range=[0, y_max_limit, y_step], # USE DYNAMIC Y RANGE
-            x_length=10,
-            y_length=5.5, # Slightly taller y-axis
+            x_length=9.5,  # Slightly smaller x_length to leave room for label
+            y_length=5.5,  # Slightly taller y-axis
             axis_config={"include_numbers": True, "decimal_number_config": {"num_decimal_places": 0}},
             tips=False,
+            x_axis_config={"include_tip": False},
+            y_axis_config={"include_tip": False},
         ).add_coordinates() # Add coordinates after initialization
-
+        
+        # Shift the entire axes further right to make more room for label
+        axes.shift(RIGHT * 0.7)  # Increased from 0.3 to 0.7
+        
         x_label = axes.get_x_axis_label(r"\lambda \text{ (nm)}")
-        # FIX: Set smaller font size for y-label
-        y_label = axes.get_y_axis_label(
-            r"\text{Intensity (arb. units)}",
-            edge=LEFT,
-            direction=LEFT,
-            font_size=24 # Smaller font size
-        )
+        
+        # Use a vertical orientation for the y-axis label to save horizontal space
+        y_label = Tex(r"\text{Intensity}", font_size=28).rotate(90 * DEGREES)
+        
+        # Position it further left with more buffer
+        y_label.next_to(axes.y_axis, LEFT, buff=0.7)  # Increased buffer
+        y_label.shift(UP * 0.5)  # Center it vertically
+        
         axes_labels = VGroup(x_label, y_label)
 
         self.play(Write(spectrum_title), Write(spectrum_expl))
@@ -254,7 +261,9 @@ class BlackbodyRadiationExplained(Scene):
                  self.wait(1.0)
 
 
-        spectrum_summary = Tex(r"Higher T \(\implies\) Higher Intensity & Peak shifts to shorter \(\lambda\)", font_size=30).next_to(axes, DOWN, buff=0.4)
+        # Fix the LaTeX error by escaping the ampersand (&) character
+        spectrum_summary = Tex(r"Higher T \(\implies\) Higher Intensity \& Peak shifts to shorter \(\lambda\)", 
+                              font_size=30).next_to(axes, DOWN, buff=0.4)
         self.play(Write(spectrum_summary))
         self.wait(3)
 
