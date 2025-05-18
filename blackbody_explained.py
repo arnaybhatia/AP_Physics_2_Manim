@@ -1,549 +1,559 @@
 import numpy as np
 from manim import *
 
-# Define a list of colors and corresponding temperatures.
-# This is used to visualize the color change as the temperature increases.
+# Constants for Planck's Law (more physically accurate, but can be complex for simple viz)
+# H_PLANCK = 6.626e-34  # Planck's constant (J*s)
+# C_LIGHT = 3.00e8     # Speed of light (m/s)
+# K_BOLTZMANN = 1.38e-23 # Boltzmann constant (J/K)
+
 TEMP_COLORS = [
-    (300, DARK_GRAY),      # Starting color at room temperature (300K).
-    (500, ManimColor.from_rgb([0.4, 0, 0])),  # Deep red.  Using ManimColor for precise color control.
-    (800, RED_E),          # Dull red.
-    (1000, RED_D),         # Bright red.
-    (1200, ORANGE),        # Orange.
-    (1400, YELLOW_E),      # Yellow.
-    (1600, YELLOW_D),      # Brighter Yellow.
-    (2500, WHITE),         # Approaching white (requires higher temperatures).
+    (300, DARK_GRAY),
+    (800, ManimColor.from_rgb([0.6, 0, 0])),
+    (1000, RED_E),
+    (1200, RED_D),
+    (1500, ORANGE),
+    (2000, YELLOW_E),
+    (2500, YELLOW_D),
+    (3000, WHITE),
+    (4000, BLUE_C), # Corrected from LIGHT_BLUE
+    (5800, WHITE)
 ]
 
-# Wien's displacement constant in meter-Kelvin (m*K). This is a fundamental constant
-# used in Wien's Law to calculate the peak wavelength of blackbody radiation.
 B_Wien = 2.898e-3
+EPSILON = 1e-9
+SIGMA = 5.670374419e-8 # Stefan-Boltzmann constant W/(m^2 K^4)
 
-# This function calculates the intensity of blackbody radiation as a function of
-# wavelength and temperature.  It's a simplified version focused on the peak shift.
-# The function returns the intensity at a given wavelength, for a given temperature.
-def pseudo_planck(wavelength_nm, T_kelvin):
-    # Convert the input wavelength to a NumPy array. This ensures that the
-    # function can handle a range of wavelengths efficiently.
-    wavelength_nm = np.asarray(wavelength_nm)
+def pseudo_planck(wavelength_nm_input, T_kelvin):
+    # Check if the input wavelength is a scalar
+    is_scalar_input = np.isscalar(wavelength_nm_input)
+    
+    # Convert to NumPy array for vectorized operations
+    wavelength_nm = np.asarray(wavelength_nm_input)
 
-    # Handle the case where temperature is zero or negative. In this scenario,
-    # there is no blackbody radiation, so we return an array of zeros with the
-    # same shape as the wavelength array.
     if T_kelvin <= 0:
-        return np.zeros_like(wavelength_nm)
+        # Return 0.0 if scalar input, array of zeros if array input
+        return 0.0 if is_scalar_input else np.zeros_like(wavelength_nm, dtype=float)
 
-    # Convert wavelength from nanometers to meters.
     lambda_m = wavelength_nm * 1e-9
-
-    # Calculate the peak wavelength (in meters) using Wien's displacement law.
-    lambda_max_m = B_Wien / T_kelvin
-
-    # Convert the peak wavelength to nanometers.
+    lambda_max_m = B_Wien / (T_kelvin + EPSILON)
     peak_nm = lambda_max_m * 1e9
 
-    # Define the width of the distribution, to better match real blackbody curves.
-    left_width = peak_nm * 0.3
-    right_width = peak_nm * 0.6
+    left_width = peak_nm * 0.3 + EPSILON
+    right_width = peak_nm * 0.6 + EPSILON
 
-    # Create boolean arrays to separate the wavelengths into two regions:
-    # wavelengths less than the peak, and wavelengths greater than the peak.
-    left_side = wavelength_nm <= peak_nm
-    right_side = wavelength_nm > peak_nm
+    # Initialize intensity array (or scalar if input was scalar)
+    intensity = np.zeros_like(wavelength_nm, dtype=float)
 
-    # Initialize an array to store the intensity values.  The shape matches
-    # the input wavelength array.
-    intensity = np.zeros_like(wavelength_nm)
+    # Conditions for left and right side of the peak
+    left_side_condition = wavelength_nm <= peak_nm
+    right_side_condition = wavelength_nm > peak_nm
 
-    # Calculate the intensity for wavelengths less than or equal to the peak.
-    # The formula is a Gaussian-like distribution.  The left side (shorter wavelengths)
-    # falls off more sharply.
-    intensity[left_side] = np.exp(-((wavelength_nm[left_side] - peak_nm)**2) / (2 * left_width**2))
+    if wavelength_nm.ndim > 0:
+        intensity[left_side_condition] = np.exp(-((wavelength_nm[left_side_condition] - peak_nm)**2) / (2 * left_width**2))
+        intensity[right_side_condition] = np.exp(-((wavelength_nm[right_side_condition] - peak_nm)**2) / (2 * right_width**2))
+    else: 
+        if left_side_condition: 
+            intensity = np.exp(-((wavelength_nm - peak_nm)**2) / (2 * left_width**2))
+        elif right_side_condition: 
+            intensity = np.exp(-((wavelength_nm - peak_nm)**2) / (2 * right_width**2))
 
-    # Calculate the intensity for wavelengths greater than the peak.  The right
-    # side (longer wavelengths) has a gentler falloff.
-    intensity[right_side] = np.exp(-((wavelength_nm[right_side] - peak_nm)**2) / (2 * right_width**2))
+    # This T^4 scaling is a visual approximation related to Stefan-Boltzmann's P ~ T^4
+    # The pseudo_planck function models the *shape* and *peak shift* of the spectral curve.
+    # The overall height of the curve in the spectrum plot will visually show the T^4 dependence.
+    intensity *= (T_kelvin / 1000)**4 # Keep this for the spectrum plot scaling
 
-    # Scale the intensity, roughly, with T^4. This approximates the Stefan-Boltzmann law,
-    # which states that the total power radiated is proportional to T^4. This is a
-    # simplified approximation for visual purposes.
-    intensity *= (T_kelvin / 1000)**4
-
-    # Return the raw intensity values.  The dynamic axis scaling in the Manim
-    # scene will handle the final display scaling.
+    if is_scalar_input:
+        return intensity.item() 
     return intensity
+
 
 class BlackbodyRadiationExplained(Scene):
     def construct(self):
         # --- Title Scene ---
-
-        # Create the title text object.  Set the font size to 60.
         title = Tex("Blackbody Radiation", font_size=60)
-
-        # Create the subtitle text object and position it below the title.
         subtitle = Tex("From Heat to Light", font_size=40).next_to(title, DOWN, buff=0.3)
-
-        # Create the introductory text and position it below the subtitle.
         intro_text = Tex(
             "All objects emit radiation based on their temperature.",
             font_size=32
         ).next_to(subtitle, DOWN, buff=0.5)
-
-        # Play animations to display the title, subtitle, and introductory text.
         self.play(Write(title))
         self.play(FadeIn(subtitle, shift=UP))
         self.play(FadeIn(intro_text, shift=UP))
-
-        # Wait for 2 seconds.
         self.wait(2)
-
-        # Fade out the title, subtitle, and introductory text.
         self.play(FadeOut(title), FadeOut(subtitle), FadeOut(intro_text))
-
-        # Wait for a short period.
         self.wait(0.5)
 
         # --- Simulated Experiment ---
-
-        # Create the explanation text for the heating experiment.
         explanation1 = Tex("Let's heat an object, like an iron nail:", font_size=36).to_edge(UP)
-
-        # Create a rectangle to represent the iron nail. Set the initial color.
         nail = Rectangle(width=3, height=0.3, color=DARK_GRAY, fill_opacity=1).round_corners(0.1)
-        nail.set_fill(DARK_GRAY)
+        nail.set_fill(DARK_GRAY) 
 
-        # Create the temperature label.
-        temp_label = Tex("Temperature: ", font_size=30)
-
-        # Create the temperature value display.
+        temp_label_text = Tex("Temperature: ", font_size=30)
         temp_value = DecimalNumber(
-            300, # Start at room temp (approx 300K)
+            300,
             num_decimal_places=0,
             unit=" K",
             font_size=30
         )
+        temp_display = VGroup(temp_label_text, temp_value).arrange(RIGHT).next_to(nail, DOWN, buff=0.5)
 
-        # Group the temperature label and value together.
-        temp_display = VGroup(temp_label, temp_value).arrange(RIGHT).next_to(nail, DOWN, buff=0.5)
-
-        # Display the explanation text and the iron nail, with its temperature display.
         self.play(FadeIn(explanation1))
         self.play(Create(nail), Write(temp_display))
-
-        # Wait a moment.
         self.wait(1)
 
-        # Animate the heating of the nail and the corresponding color changes.
-        for i in range(1, len(TEMP_COLORS)): # Start from index 1 to show color changes
-            # Extract target temperature and color.
-            target_temp, target_color = TEMP_COLORS[i]
+        nail_heating_colors = [tc for tc in TEMP_COLORS if tc[0] <= 3000]
 
-            # Calculate animation time based on the temperature change.  This makes
-            # the animation duration proportional to the temperature difference.
+        for i in range(len(nail_heating_colors)):
+            target_temp, target_color = nail_heating_colors[i]
+            if target_temp < temp_value.get_value(): 
+                continue
             previous_temp = temp_value.get_value()
-            anim_time = 1.0 + abs(target_temp - previous_temp) / 500  # Use abs for safety
-            if anim_time <= 0:
-                anim_time = 0.5  # Ensure positive run_time
-
-            # Animate the temperature display and the color of the nail.
+            anim_time = 0.5 + abs(target_temp - previous_temp) / 500
+            if anim_time <= 0: anim_time = 0.2 
             self.play(
-                temp_value.animate.set_value(target_temp), # Update temperature
-                nail.animate.set_fill(target_color),      # Change nail color
-                run_time=anim_time                        # Set animation time
+                temp_value.animate.set_value(target_temp),
+                nail.animate.set_fill(target_color, opacity=1.0), 
+                run_time=anim_time
             )
-
-            # Wait a short time between each temperature step.
-            self.wait(0.7)
-
-        # Wait a longer time after the heating animation.
+            self.wait(0.5)
         self.wait(2)
 
-        # Create the explanation text for the color shifts.
         explanation2 = Tex(
             "Color shifts: ",
-            "Red", " $\\rightarrow$ ",
-            "Orange", " $\\rightarrow$ ",
-            "Yellow", " $\\rightarrow$ ",
-            "White",
-            " as T increases",
+            "Red", " $\\rightarrow$ ", "Orange", " $\\rightarrow$ ",
+            "Yellow", " $\\rightarrow$ ", "White", " as T increases",
             font_size=32
         )
-
-        # Set the colors for specific text elements to match the color changes.
         explanation2[1].set_color(RED_D)
         explanation2[3].set_color(ORANGE)
         explanation2[5].set_color(YELLOW_D)
         explanation2[7].set_color(WHITE)
-
-        # Position the color shift explanation below the temperature display.
         explanation2.next_to(temp_display, DOWN, buff=0.5)
-
-        # Display the color shift explanation.
         self.play(Write(explanation2))
-
-        # Wait a moment.
         self.wait(2)
-
-        # Fade out the nail, temperature display, and explanations.
         self.play(
             FadeOut(nail), FadeOut(temp_display), FadeOut(explanation1), FadeOut(explanation2)
         )
-
-        # Wait a short time.
         self.wait(0.5)
 
         # --- Physics: Wien's Law ---
-
-        # Create the title for Wien's Displacement Law.
         wien_title = Tex("Wien's Displacement Law", font_size=48).to_edge(UP)
-
-        # Create the formula for Wien's Law.
         wien_formula = MathTex(r"\lambda_{max} = \frac{b}{T}", font_size=60)
-
-        # Create an explanation of Wien's Law.
         wien_explanation = Tex(
             r"Peak wavelength (\(\lambda_{max}\)) is inversely proportional to Temperature (T).",
             font_size=32
         ).next_to(wien_formula, DOWN, buff=0.5)
-
-        # Create an implication of Wien's Law.
         wien_implication = Tex(
             r"Higher T \(\implies\) Shorter \(\lambda_{max}\) (shifts towards blue/white)",
             font_size=32
         ).next_to(wien_explanation, DOWN, buff=0.3)
-
-        # Display the title, formula, explanation, and implication.
         self.play(Write(wien_title))
         self.play(Write(wien_formula))
         self.play(FadeIn(wien_explanation, shift=UP))
         self.play(FadeIn(wien_implication, shift=UP))
-
-        # Wait a moment.
         self.wait(3)
-
-        # Fade out the Wien's Law elements.
         self.play(
             FadeOut(wien_title), FadeOut(wien_formula),
             FadeOut(wien_explanation), FadeOut(wien_implication)
         )
-
-        # Wait a moment.
         self.wait(0.5)
 
-        # --- Physics: Blackbody Spectrum ---
+        # --- Physics: Stefan-Boltzmann Law ---
+        stefan_title = Tex("Stefan-Boltzmann Law", font_size=48).to_edge(UP)
+        # P = εσAT^4. For a perfect blackbody, ε=1. Power per unit area is J = σT^4
+        stefan_formula = MathTex(r"P = \epsilon \sigma A T^4", font_size=60)
+        stefan_formula_simple = MathTex(r"P \propto T^4", font_size=60).next_to(stefan_formula, DOWN, buff=0.7)
+        
+        stefan_explanation = Tex(
+            r"Total power (\(P\)) radiated by an object is proportional to its surface area (\(A\))",
+            r"and the fourth power of its absolute temperature (\(T\)).",
+            r"(\(\epsilon\) is emissivity, \(\sigma\) is Stefan-Boltzmann constant)",
+            font_size=30, tex_environment="flushleft"
+        ).next_to(stefan_formula_simple, DOWN, buff=0.5)
+        stefan_explanation.set_width(FRAME_WIDTH - 2)
 
-        # Create the title for the blackbody spectrum section.
+
+        stefan_implication = Tex(
+            r"Hotter objects radiate energy much more intensely.",
+            font_size=32
+        ).next_to(stefan_explanation, DOWN, buff=0.4)
+
+        self.play(Write(stefan_title))
+        self.play(Write(stefan_formula))
+        self.play(Write(stefan_formula_simple))
+        self.play(FadeIn(stefan_explanation, shift=UP))
+        self.play(FadeIn(stefan_implication, shift=UP))
+        self.wait(4) # Longer wait for this important law
+        self.play(
+            FadeOut(stefan_title), FadeOut(stefan_formula), FadeOut(stefan_formula_simple),
+            FadeOut(stefan_explanation), FadeOut(stefan_implication)
+        )
+        self.wait(0.5)
+
+
+        # --- Physics: Blackbody Spectrum (Modified for Dynamic Axes, Improved Robustness) ---
+        # This section remains as it was in your provided code with dynamic axes
         spectrum_title = Tex("Blackbody Spectrum", font_size=48).to_edge(UP)
-
-        # Create an explanation of the blackbody spectrum.
         spectrum_expl = Tex("Intensity of radiation vs. Wavelength", font_size=32).next_to(spectrum_title, DOWN, buff=0.2)
-
-        # Define a list of temperatures to plot.
-        temps_to_plot = [1000, 1500, 2500, 4000] # K
-
-        # Define a list of colors for the plots, matching the temperatures.
-        colors_to_plot = [RED_D, ORANGE, YELLOW_D, WHITE]
-
-        # --- Calculate dynamic Y range BEFORE creating Axes ---
-
-        # Determine the maximum intensity value to set the y-axis range dynamically.
-        max_intensity = 0
-
-        # Define the wavelengths to check for the peak.
-        wavelengths_for_peak_check = np.linspace(50, 2500, 300) # Start lower (50nm)
-
-        # Iterate through the temperatures and calculate the intensities
-        for T_check in temps_to_plot:
-            # Calculate intensities for the current temperature
-            intensities = pseudo_planck(wavelengths_for_peak_check, T_check)
-            # Filter out any invalid intensity values (e.g., due to numerical errors)
-            valid_intensities = intensities[np.isfinite(intensities)]
-            # Find the maximum intensity value
-            if len(valid_intensities) > 0:
-                max_intensity = max(max_intensity, np.max(valid_intensities))
-
-        # Calculate a buffer for the maximum intensity. This ensures that the
-        # plots don't reach the edge of the graph.  Increase the buffer.
-        y_max_limit = max_intensity * 1.4 # Increased buffer to 40%
-
-        # Handle cases where there's no radiation.
-        if y_max_limit <= 0:
-            y_max_limit = 10  # Default max if no intensity
-
-        # Determine the y-axis step size for tick marks.  Aim for roughly 4-6 major ticks.
-        if y_max_limit < 1:
-            y_step = 0.2 # Handle small intensity cases
-        elif y_max_limit < 10:
-            y_step = np.ceil(y_max_limit / 5) # Round step up
-        elif y_max_limit < 100:
-            y_step = np.ceil(y_max_limit / 5 / 5) * 5 # Round up to nearest 5
-        else:
-            # Ensure step is significant enough for large ranges
-            power_of_10 = 10**np.floor(np.log10(y_max_limit/5))
-            y_step = np.ceil(y_max_limit / 5 / power_of_10) * power_of_10
-
-        # Avoid step size of zero.
-        if y_step == 0:
-            y_step = 1
-
-        # Adjust the maximum y-axis limit to be a multiple of the step size. This
-        # makes the tick marks cleaner.
-        y_max_limit = np.ceil(y_max_limit / y_step) * y_step
-
-        # --- End of Y range calculation ---
-
-        # Create the axes for the plot, with the x-axis as wavelength (nm) and
-        # the y-axis as intensity.
-        axes = Axes(
-            x_range=[200, 1500, 200], # Wavelength in nm, start at 200nm
-            y_range=[0, y_max_limit, y_step], # USE DYNAMIC Y RANGE
-            x_length=9.5,
-            y_length=5.5,
-            axis_config={"include_numbers": True},
-            tips=False,
-            x_axis_config={"include_tip": False},
-            y_axis_config={"include_tip": False},
-        ).add_coordinates()
-
-        # Shift the axes slightly to the right to create more space for labels.
-        axes.shift(RIGHT * 0.7)  # Increased from 0.3 to 0.7
-
-        # Create the x-axis label.
-        x_label = axes.get_x_axis_label(r"\lambda \text{ (nm)}")
-
-        # Create the y-axis label and rotate it for better readability.
-        y_label = Tex(r"\text{Intensity}", font_size=28).rotate(90 * DEGREES)
-
-        # Position the y-axis label to the left of the y-axis, with some buffer.
-        y_label.next_to(axes.y_axis, LEFT, buff=0.7) # Increased buffer
-        y_label.shift(UP * 0.5) # Center it vertically
-
-        # Group the axis labels together.
-        axes_labels = VGroup(x_label, y_label)
-
-        # Display the title, explanation, axes, and labels.
         self.play(Write(spectrum_title), Write(spectrum_expl))
-        self.play(Create(axes), Write(axes_labels))
 
-        # Wait a moment.
-        self.wait(1)
+        temps_to_plot = [1000, 1500, 2500, 4000] 
+        plot_colors_map = {
+            1000: RED_D, 1500: ORANGE, 2500: YELLOW_D, 4000: WHITE
+        }
+        
+        current_axes_mob = None
+        current_x_label_mob = None
+        current_y_label_mob = None
+        plots_on_screen = VGroup()
+        dots_on_screen = VGroup()
+        temp_labels_on_screen = VGroup()
 
-        # Create a VGroup to hold all the plots.
-        plots = VGroup()
+        plot_data_accumulator = [] 
+        wavelengths_for_axis_scaling = np.linspace(200, 1500, 200)
+        fixed_x_range = [200, 1500, 200]
 
-        # Create a VGroup to hold the dots marking the peak wavelengths.
-        peak_dots = VGroup()
-
-        # Create a VGroup to hold the temperature labels for the plots.
-        temp_labels = VGroup()
-
-        # Iterate through the list of temperatures.
-        for i, T in enumerate(temps_to_plot):
-            # Calculate the peak wavelength for the current temperature using
-            # Wien's displacement law.
-            lambda_max_m = B_Wien / T
+        for T_plot_idx, T_plot in enumerate(temps_to_plot):
+            color = plot_colors_map[T_plot]
+            plot_function = lambda wl, temp_capture=T_plot: pseudo_planck(wl, temp_capture)
+            
+            lambda_max_m = B_Wien / (T_plot + EPSILON)
             lambda_max_nm = lambda_max_m * 1e9
+            peak_intensity_at_max_wl = pseudo_planck(lambda_max_nm, T_plot)
 
-            # Plot the blackbody spectrum for the current temperature.
-            # The lambda argument is a lambda function that takes a wavelength
-            # in nanometers and returns the corresponding intensity.
-            plot = axes.plot(
-                lambda wl: pseudo_planck(wl, T), # Pass temperature T
-                x_range=[axes.x_range[0], axes.x_range[1]], # Use axis range
-                color=colors_to_plot[i],
-                use_smoothing=True # Smooth the curve
-            )
-            # Add the plot to the plots VGroup.
-            plots.add(plot)
+            plot_data_accumulator.append((T_plot, color, plot_function, lambda_max_nm, peak_intensity_at_max_wl))
 
-            # Add a dot at the peak wavelength.
-            # Calculate the peak intensity using the `pseudo_planck` function.
-            peak_intensity = pseudo_planck(lambda_max_nm, T)
+            max_intensity_so_far = 0.001 
+            for p_data in plot_data_accumulator:
+                max_intensity_so_far = max(max_intensity_so_far, p_data[4]) 
+                sampled_intensities = p_data[2](wavelengths_for_axis_scaling)
+                if isinstance(sampled_intensities, np.ndarray) and sampled_intensities.size > 0:
+                    valid_sampled = sampled_intensities[np.isfinite(sampled_intensities)]
+                    if valid_sampled.size > 0:
+                         max_intensity_so_far = max(max_intensity_so_far, np.max(valid_sampled))
 
-            # Check if the peak wavelength is within the x-axis range.
-            if axes.x_range[0] <= lambda_max_nm <= axes.x_range[1]:
-                # Check if the peak intensity is within the y-axis range before converting.
-                if axes.y_range[0] <= peak_intensity <= axes.y_range[1]:
-                     peak_point = axes.c2p(lambda_max_nm, peak_intensity)
-                else:
-                    # If peak intensity is outside calculated dynamic range, clamp it
-                    peak_intensity_clamped = np.clip(peak_intensity, axes.y_range[0], axes.y_range[1])
-                    peak_point = axes.c2p(lambda_max_nm, peak_intensity_clamped)
-
-                # Create a dot at the peak wavelength.
-                peak_dot = Dot(point=peak_point, color=colors_to_plot[i], radius=0.08)
-
-                # Add the dot to the peak_dots VGroup.
-                peak_dots.add(peak_dot)
-
-                # Calculate the offset for the label to avoid overlap.
-                label_offset_y = 0.15 * y_max_limit if i % 2 else -0.15 * y_max_limit
-
-                # Position the label to the left or right, depending on peak.
-                if lambda_max_nm < (axes.x_range[0] + axes.x_range[1]) / 2:
-                    label_offset_x = 150  # Right side for left peaks
-                else:
-                    label_offset_x = -150  # Left side for right peaks
-
-                # Determine the position for the temperature label.
-                label_pos = peak_point + RIGHT * label_offset_x * axes.x_length / (axes.x_range[1]-axes.x_range[0]) + UP * label_offset_y
-
-                # Ensure label stays within axes bounds
-                label_pos[0] = max(label_pos[0], axes.x_range[0] * axes.x_axis.unit_size + axes.x_axis.get_start()[0] + 0.5)
-                label_pos[0] = min(label_pos[0], axes.x_range[1] * axes.x_axis.unit_size + axes.x_axis.get_start()[0] - 0.5)
-                label_pos[1] = max(label_pos[1], axes.y_range[0] * axes.y_axis.unit_size + axes.y_axis.get_start()[1] + 0.2)
-                label_pos[1] = min(label_pos[1], axes.y_range[1] * axes.y_axis.unit_size + axes.y_axis.get_start()[1] - 0.2)
-
-                # Create the temperature label.
-                temp_label_text = MathTex(f"{T} K", color=colors_to_plot[i], font_size=28).move_to(label_pos)
-
-                # Add the label to the temp_labels VGroup.
-                temp_labels.add(temp_label_text)
-
-                # Animate the creation of the plot, the dot, and the temperature label.
-                self.play(
-                    Create(plot, run_time=2),
-                    FadeIn(peak_dot, scale=0.5),
-                    Write(temp_label_text)
-                )
-                self.wait(1.0)  # Slightly shorter wait time
-
+            y_max_limit = max_intensity_so_far * 1.2 
+            if y_max_limit <= 0.01 : y_max_limit = 10.0 
+            
+            if y_max_limit < 1: y_step = 0.2
+            elif y_max_limit < 10: y_step = np.ceil(y_max_limit / 5)
+            elif y_max_limit < 100: y_step = np.ceil(y_max_limit / 5 / 5) * 5
             else:
-                # If peak is outside x_range, just draw the plot without dot/label
-                self.play(Create(plot, run_time=2))
-                self.wait(1.0)
+                power_of_10 = 10**np.floor(np.log10(y_max_limit/5) if y_max_limit/5 > 0 else 0.1)
+                y_step = np.ceil(y_max_limit / 5 / power_of_10) * power_of_10
+            if y_step <= 0: y_step = 1.0 
+            y_max_limit = np.ceil(y_max_limit / y_step) * y_step
+            if y_max_limit == 0 : y_max_limit = y_step * 5
 
-        # Create a summary text explaining the blackbody spectrum.  The r"" string
-        # is used for raw strings, to avoid having to escape backslashes.
+            target_y_range = [0, y_max_limit, y_step]
+            target_axes = Axes(
+                x_range=fixed_x_range, y_range=target_y_range, x_length=9.5, y_length=5.5,
+                axis_config={"include_numbers": True, "decimal_number_config": {"num_decimal_places": 1}},
+                tips=False,
+            ).add_coordinates().shift(RIGHT * 0.7)
+            target_x_label = target_axes.get_x_axis_label(r"\lambda \text{ (nm)}")
+            target_y_label = Tex(r"\text{Intensity}", font_size=28).rotate(90 * DEGREES).next_to(target_axes.y_axis, LEFT, buff=0.6)
+
+            all_target_plots = VGroup()
+            all_target_dots = VGroup()
+            all_target_labels = VGroup()
+
+            for idx, (T, c, pf, l_max_nm, p_int_val) in enumerate(plot_data_accumulator): # Renamed p_int to p_int_val
+                plot = target_axes.plot(pf, x_range=[fixed_x_range[0], fixed_x_range[1]], color=c, use_smoothing=True)
+                all_target_plots.add(plot)
+                current_peak_intensity_for_dot = p_int_val # Use the specific peak intensity for this plot
+                if fixed_x_range[0] <= l_max_nm <= fixed_x_range[1] and \
+                   target_y_range[0] <= current_peak_intensity_for_dot <= target_y_range[1]:
+                    peak_point = target_axes.c2p(l_max_nm, current_peak_intensity_for_dot)
+                    dot = Dot(point=peak_point, color=c, radius=0.08)
+                    all_target_dots.add(dot)
+                    label_text_obj = MathTex(f"{T} K", color=c, font_size=28)
+                    label_pos_dir = UP if idx % 2 == 0 else DOWN
+                    if l_max_nm > (fixed_x_range[0] + fixed_x_range[1]) *0.75 : label_pos_dir = LEFT + UP*0.5
+                    elif l_max_nm < (fixed_x_range[0] + fixed_x_range[1]) *0.25 : label_pos_dir = RIGHT + UP*0.5
+                    label_text_obj.next_to(dot, label_pos_dir, buff=0.2)
+                    all_target_labels.add(label_text_obj)
+            
+            current_animations = []
+            if current_axes_mob is None: 
+                current_axes_mob = target_axes
+                current_x_label_mob = target_x_label
+                current_y_label_mob = target_y_label
+                self.play(Create(current_axes_mob), Write(current_x_label_mob), Write(current_y_label_mob))
+                if len(all_target_plots) > 0:
+                    current_animations.append(Create(all_target_plots[0]))
+                    plots_on_screen.add(all_target_plots[0])
+                if len(all_target_dots) > 0:
+                    current_animations.append(FadeIn(all_target_dots[0]))
+                    dots_on_screen.add(all_target_dots[0])
+                if len(all_target_labels) > 0:
+                    current_animations.append(Write(all_target_labels[0]))
+                    temp_labels_on_screen.add(all_target_labels[0])
+            else: 
+                current_animations.extend([
+                    Transform(current_axes_mob, target_axes),
+                    Transform(current_x_label_mob, target_x_label),
+                    Transform(current_y_label_mob, target_y_label),
+                ])
+                for k in range(len(plots_on_screen)):
+                    current_animations.append(Transform(plots_on_screen[k], all_target_plots[k]))
+                current_animations.append(Create(all_target_plots[-1]))
+                plots_on_screen.add(all_target_plots[-1])
+                new_dots_to_track = VGroup()
+                for k in range(len(all_target_dots)):
+                    if k < len(dots_on_screen):
+                        current_animations.append(Transform(dots_on_screen[k], all_target_dots[k]))
+                        new_dots_to_track.add(dots_on_screen[k])
+                    else:
+                        current_animations.append(FadeIn(all_target_dots[k]))
+                        new_dots_to_track.add(all_target_dots[k])
+                for k in range(len(all_target_dots), len(dots_on_screen)):
+                    current_animations.append(FadeOut(dots_on_screen[k]))
+                dots_on_screen = new_dots_to_track
+                new_labels_to_track = VGroup()
+                for k in range(len(all_target_labels)):
+                    if k < len(temp_labels_on_screen):
+                        current_animations.append(Transform(temp_labels_on_screen[k], all_target_labels[k]))
+                        new_labels_to_track.add(temp_labels_on_screen[k])
+                    else:
+                        current_animations.append(Write(all_target_labels[k]))
+                        new_labels_to_track.add(all_target_labels[k])
+                for k in range(len(all_target_labels), len(temp_labels_on_screen)):
+                    current_animations.append(FadeOut(temp_labels_on_screen[k]))
+                temp_labels_on_screen = new_labels_to_track
+            self.play(*current_animations, run_time=1.5)
+            self.wait(0.7)
+            
         spectrum_summary = Tex(r"Higher T \(\implies\) Higher Intensity \& Peak shifts to shorter \(\lambda\)",
-                              font_size=30).next_to(axes, DOWN, buff=0.4)
-
-        # Display the summary text.
+                               font_size=30).next_to(current_axes_mob if current_axes_mob else self, DOWN, buff=0.7)
         self.play(Write(spectrum_summary))
-
-        # Wait a moment.
         self.wait(3)
 
-        # Add a text explaining why classical physics failed.
         planck_text = Tex("Classical physics failed. Planck proposed quantized energy.", font_size=30).next_to(spectrum_summary, DOWN, buff=0.5)
-
-        # Display Planck's text
         self.play(FadeIn(planck_text))
-
-        # Wait a moment.
         self.wait(2)
 
-        # Fade out the spectrum elements.
-        self.play(
-            FadeOut(axes), FadeOut(axes_labels), FadeOut(plots), FadeOut(peak_dots),
-            FadeOut(temp_labels), FadeOut(spectrum_title), FadeOut(spectrum_expl),
-            FadeOut(spectrum_summary), FadeOut(planck_text)
-        )
-
-        # Wait a moment.
+        elements_to_fade = VGroup(spectrum_title, spectrum_expl, spectrum_summary, planck_text)
+        if current_axes_mob: elements_to_fade.add(current_axes_mob)
+        if current_x_label_mob: elements_to_fade.add(current_x_label_mob)
+        if current_y_label_mob: elements_to_fade.add(current_y_label_mob)
+        elements_to_fade.add(plots_on_screen, dots_on_screen, temp_labels_on_screen)
+        
+        self.play(FadeOut(elements_to_fade))
         self.wait(0.5)
 
         # --- Real World Examples ---
-
-        # Create the title for the real-world examples section.
         examples_title = Tex("Real-World Examples", font_size=48).to_edge(UP)
-
-        # Display the title.
         self.play(Write(examples_title))
 
-        # --- Incandescent Bulb ---
-
-        # Create the filament for the incandescent bulb.
         bulb_filament = Line(LEFT*0.5, RIGHT*0.5, color=YELLOW_D, stroke_width=6).shift(UP*1.5)
-
-        # Create the glass bulb around the filament.
-        bulb_glass = Circle(radius=1.0, color=WHITE).surround(bulb_filament, buffer_factor=1.5)
-
-        # Create the base of the bulb.
+        bulb_glass = Circle(radius=1.0, color=WHITE, stroke_opacity=0.5).surround(bulb_filament, buffer_factor=1.5)
         bulb_base = Rectangle(width=0.6, height=0.4, color=GRAY).next_to(bulb_glass, DOWN, buff=-0.05)
-
-        # Group the bulb elements.
         bulb = VGroup(bulb_filament, bulb_glass, bulb_base)
-
-        # Create the text for the incandescent bulb example.
         bulb_text = Tex("Incandescent Bulb: Hot filament glows", font_size=30).next_to(bulb, DOWN)
-
-        # --- Stars ---
-
-        # Define the vertical position for the stars.
-        star_y_pos = DOWN * 1.5
-
-        # Define the buffer value for spacing.
-        star_buff = 0.3
-
-        # Increased horizontal spacing between the stars.
-        star_h_spacing = 3.5
-
-        # Create the first star (cooler star).
-        star1 = Star(n=5, outer_radius=0.5, color=RED_D, fill_opacity=1).shift(star_y_pos + LEFT*star_h_spacing)
-
-        # Create the text for the first star.
-        star1_text = Tex("Cooler Star (Red)", font_size=28).next_to(star1, DOWN, buff=star_buff)
-
-        # Create the second star (medium temperature).
-        star2 = Star(n=5, outer_radius=0.6, color=YELLOW_E, fill_opacity=1).shift(star_y_pos)
-
-        # Create the text for the second star.
-        star2_text = Tex("Medium Star (Yellow)", font_size=28).next_to(star2, DOWN, buff=star_buff)
-
-        # Create the third star (hotter star).
-        star3 = Star(n=5, outer_radius=0.7, color=BLUE_C, fill_opacity=1).shift(star_y_pos + RIGHT*star_h_spacing)
-
-        # Create the text for the third star.
-        star3_text = Tex("Hotter Star (Blue)", font_size=28).next_to(star3, DOWN, buff=star_buff)
-
-        # Group the stars together.
-        stars = VGroup(star1, star2, star3)
-
-        # Group the star text together.
-        stars_text = VGroup(star1_text, star2_text, star3_text)
-
-        # Display the incandescent bulb and its text.
-        self.play(FadeIn(bulb, scale=0.5), Write(bulb_text))
-
-        # Wait a moment.
+        bulb_example_group = VGroup(bulb, bulb_text).shift(LEFT * 3.5)
+        self.play(FadeIn(bulb_example_group, scale=0.8))
         self.wait(1.5)
-
-        # Animate the stars and their labels.
+        
+        star_y_pos = DOWN * 1.5
+        star_buff = 0.3
+        star_h_spacing = 3.0 
+        star1 = Star(n=5, outer_radius=0.5, color=RED_D, fill_opacity=1).shift(star_y_pos + LEFT*star_h_spacing)
+        star1_text = Tex("Cooler Star (Red)", font_size=28).next_to(star1, DOWN, buff=star_buff)
+        star2 = Star(n=5, outer_radius=0.6, color=YELLOW_E, fill_opacity=1).shift(star_y_pos)
+        star2_text = Tex("Medium Star (Yellow)", font_size=28).next_to(star2, DOWN, buff=star_buff)
+        star3 = Star(n=5, outer_radius=0.7, color=BLUE_C, fill_opacity=1).shift(star_y_pos + RIGHT*star_h_spacing)
+        star3_text = Tex("Hotter Star (Blue)", font_size=28).next_to(star3, DOWN, buff=star_buff)
+        stars = VGroup(star1, star2, star3)
+        stars_text = VGroup(star1_text, star2_text, star3_text)
+        stars_group = VGroup(stars, stars_text).shift(RIGHT * 3) 
         self.play(Create(stars), Write(stars_text))
-
-        # Wait.
         self.wait(3)
-
-        # Fade out the real-world examples.
-        self.play(FadeOut(examples_title), FadeOut(bulb), FadeOut(bulb_text), FadeOut(stars), FadeOut(stars_text))
-
-        # Wait a moment.
+        self.play(FadeOut(examples_title), FadeOut(bulb_example_group), FadeOut(stars_group))
         self.wait(0.5)
 
         # --- Conclusion ---
-
-        # Create the first part of the conclusion text.
         conclusion = Tex("Blackbody radiation connects temperature, color, and light,", font_size=36)
-
-        # Create the second part of the conclusion text.
         conclusion2 = Tex("a key concept in physics.", font_size=36).next_to(conclusion, DOWN)
-
-        # Create the final thanks text.
         final_thanks = Tex("Thanks for watching!", font_size=40).next_to(conclusion2, DOWN, buff=0.8)
-
-        # Display the conclusion and thanks.
         self.play(Write(conclusion))
         self.play(Write(conclusion2))
-
-        # Wait a moment.
         self.wait(1.5)
         self.play(FadeIn(final_thanks))
-
-        # Wait.
         self.wait(3)
-
-        # Fade out all the objects in the scene.
         self.play(*[FadeOut(mob) for mob in self.mobjects])
+        self.wait(1)
 
-        # Wait one second at the end.
+# The IncandescentBulbDiffraction class and SunAndSquareScene class would follow here if they are in the same file.
+# For this update, I'm only showing the modified BlackbodyRadiationExplained class.
+
+class IncandescentBulbDiffraction(Scene):
+    def construct(self):
+        title = Tex("Incandescent Bulb \\& Diffraction", font_size=48).to_edge(UP)
+        self.play(Write(title))
+
+        # Bulb representation
+        bulb_filament = Ellipse(width=0.2, height=0.6, color=DARK_GRAY, fill_opacity=1.0)
+        bulb_filament.set_fill(DARK_GRAY)
+        bulb_glass = Circle(radius=1.0, color=WHITE, stroke_opacity=0.3).surround(bulb_filament, buffer_factor=2.0)
+        bulb_base = Rectangle(width=0.8, height=0.5, color=GRAY).next_to(bulb_glass, DOWN, buff=-0.05)
+        bulb_group = VGroup(bulb_glass, bulb_base, bulb_filament).shift(LEFT * 4.5 + UP * 0.5) # Shifted more left
+
+        temp_label_text = Tex("Temp: ", font_size=28)
+        temp_value_bulb = DecimalNumber(300, num_decimal_places=0, unit=" K", font_size=28)
+        temp_display_bulb = VGroup(temp_label_text, temp_value_bulb).arrange(RIGHT)
+        temp_display_bulb.next_to(bulb_group, DOWN, buff=0.3)
+
+        self.play(Create(bulb_group), Write(temp_display_bulb))
+        self.wait(0.5)
+
+        # Diffraction grating
+        grating = Line(UP * 1.0, DOWN * 1.0, color=GRAY, stroke_width=3).shift(LEFT * 2.0) # Slightly thicker
+        grating_label = Tex("Grating", font_size=24).next_to(grating, DOWN, buff=0.2)
+        
+        # Light rays from bulb to grating
+        num_main_rays = 7
+        light_path = VGroup()
+        # Create rays fanning out towards the grating
+        grating_points = [grating.get_start(), grating.get_center(), grating.get_end()]
+        if num_main_rays > 3: # Add intermediate points for more rays
+            grating_points.insert(1, grating.point_from_proportion(0.25))
+            grating_points.insert(3, grating.point_from_proportion(0.75))
+            if num_main_rays > 5 :
+                 grating_points.insert(1, grating.point_from_proportion(0.1))
+                 grating_points.insert(5, grating.point_from_proportion(0.9))
+
+
+        for i in range(min(num_main_rays, len(grating_points))):
+            target_point_on_grating = grating_points[i % len(grating_points)]
+            ray = Line(
+                bulb_filament.get_center(), 
+                target_point_on_grating, 
+                stroke_width=1.5, # Slightly thicker
+                color=TEMP_COLORS[0][1], # Initial color
+                stroke_opacity=0
+            )
+            light_path.add(ray)
+
+        self.play(Create(grating), Write(grating_label), Create(light_path))
+        self.wait(0.5)
+
+        # Screen area for spectrum
+        screen_center_x_val = 2.5 
+        screen_center_x = RIGHT * screen_center_x_val
+        spectrum_base_y = grating.get_center()[1] 
+        
+        spectrum_defs = [
+            {"name": "Violet", "wl": 410, "color": PURPLE_B, "pos_factor": 0.5}, # Adjusted factors for spread
+            {"name": "Blue",   "wl": 470, "color": BLUE_D,   "pos_factor": 0.65},
+            {"name": "Green",  "wl": 520, "color": GREEN_C,  "pos_factor": 0.85},
+            {"name": "Yellow", "wl": 580, "color": YELLOW_C, "pos_factor": 1.05},
+            {"name": "Orange", "wl": 610, "color": ORANGE,   "pos_factor": 1.25},
+            {"name": "Red",    "wl": 660, "color": RED_D,    "pos_factor": 1.45},
+        ]
+        
+        spectral_lines = VGroup()
+        max_bar_height = 2.0 # Slightly taller bars
+        bar_width = 0.35    # Slightly wider bars
+        
+        temps_for_bulb_animation = [300, 800, 1200, 1600, 2000, 2500, 3000, 3500, 4000, 5000] # Extended temps
+
+        # Refined max_possible_intensity_visible calculation
+        # Find the global maximum intensity that pseudo_planck will output for visible spectrum at highest animated temp
+        global_max_intensity_output = 0.01 # Initialize with a small non-zero value
+        for T_check in temps_for_bulb_animation:
+            if T_check < 600: continue # Only consider temperatures where some light might be visible
+            for spec_def in spectrum_defs:
+                intensity_val = pseudo_planck(spec_def["wl"], T_check)
+                global_max_intensity_output = max(global_max_intensity_output, float(intensity_val))
+        
+        max_possible_intensity_visible = global_max_intensity_output # Use this for normalization
+
+        for spec_def in spectrum_defs:
+            line_pos_x = screen_center_x_val + spec_def["pos_factor"] * 1.2 # Adjust spread factor if needed
+            line = Rectangle(
+                width=bar_width, height=max_bar_height, fill_color=spec_def["color"], 
+                stroke_width=0, fill_opacity=0.0
+            )
+            line.move_to(RIGHT * line_pos_x + UP * spectrum_base_y) # Position based on spectrum_base_y
+            spectral_lines.add(line)
+
+        self.play(FadeIn(spectral_lines))
+        self.wait(0.5)
+        
+        previous_opacities = [0.0] * len(spectrum_defs)
+        temp_color_map = dict(TEMP_COLORS) # For easier lookup
+
+        glow_temp_min = 700.0 # Temperature at which filament starts to visibly glow
+        glow_temp_max = max(temps_for_bulb_animation) if temps_for_bulb_animation else 4000.0
+
+
+        for T_idx, T_current in enumerate(temps_for_bulb_animation):
+            target_bulb_color_val = DARK_GRAY 
+            for temp_threshold, color_val in TEMP_COLORS:
+                if T_current >= temp_threshold:
+                    target_bulb_color_val = color_val 
+                else:
+                    break 
+
+            anim_ops_main = [
+                temp_value_bulb.animate.set_value(T_current),
+                bulb_filament.animate.set_fill(target_bulb_color_val, opacity=1.0)
+            ]
+            
+            # Animate main light rays from bulb to grating
+            ray_opacity_val = 0.0
+            if T_current > glow_temp_min:
+                # Normalize temperature for glow (0 to 1 range over visible heating)
+                normalized_temp_for_glow = (T_current - glow_temp_min) / (glow_temp_max - glow_temp_min + EPSILON)
+                ray_opacity_val = np.clip(normalized_temp_for_glow**2.5, 0, 0.8) # Quadratic increase, max 0.8 opacity
+            
+            anim_ops_main.append(light_path.animate.set_stroke(color=target_bulb_color_val, opacity=ray_opacity_val, width=2.0))
+
+            # Calculate target opacities for spectral lines for this T_current
+            current_target_opacities = []
+            for i, spec_def in enumerate(spectrum_defs):
+                intensity = pseudo_planck(spec_def["wl"], T_current)
+                opacity_val = np.clip(float(intensity) / (max_possible_intensity_visible + EPSILON), 0, 1.0)
+                current_target_opacities.append(opacity_val)
+                anim_ops_main.append(spectral_lines[i].animate.set_fill(opacity=opacity_val))
+            
+            # Play main animations (bulb, rays, spectral line opacities)
+            self.play(*anim_ops_main, run_time=0.8 if T_idx > 0 else 0.4)
+            
+            # Projection ray flashes for newly prominent spectral lines
+            projection_flash_anims = []
+            grating_projection_start_point = grating.get_center() + RIGHT * (grating.width/2 + 0.1)
+
+            for i, spec_def in enumerate(spectrum_defs):
+                new_opacity = spectral_lines[i].get_fill_opacity() # Get actual opacity after animation
+                # Check if it became prominent (e.g. crossed a threshold and increased significantly)
+                if new_opacity > 0.05 and (previous_opacities[i] < 0.05 or (new_opacity > previous_opacities[i] + 0.1)):
+                    projection_ray = Line(
+                        grating_projection_start_point, spectral_lines[i].get_center(),
+                        color=spec_def["color"], stroke_width=2
+                    )
+                    projection_flash_anims.append(ShowPassingFlash(projection_ray.set_stroke(width=2.5), time_width=0.4, run_time=0.4))
+                previous_opacities[i] = new_opacity # Update for next iteration
+            
+            if projection_flash_anims:
+                self.play(AnimationGroup(*projection_flash_anims, lag_ratio=0.1)) # Play flashes with a slight lag
+
+            self.wait(0.5 if T_current < 3000 else 0.8) # Wait longer at higher temps
+
+        explanation = Tex(
+            "Higher temperature:", "Brighter bulb,", "more intense \\& complete spectrum.", 
+            font_size=28, tex_environment="flushleft"
+        )
+        explanation.set_width(config.frame_width - bulb_group.get_width() - grating.get_width() - 2)
+        explanation.next_to(spectral_lines, DOWN, buff=0.5).to_edge(RIGHT, buff=0.5)
+
+        self.play(Write(explanation))
+        self.wait(4)
+
+        self.play(
+            FadeOut(title), FadeOut(bulb_group), FadeOut(temp_display_bulb),
+            FadeOut(grating), FadeOut(grating_label), FadeOut(light_path),
+            FadeOut(spectral_lines), FadeOut(explanation)
+        )
         self.wait(1)
